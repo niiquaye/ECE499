@@ -1,6 +1,20 @@
-# tree_dataset.py
 import numpy as np
 from torch.utils.data import Dataset
+
+
+import os
+import glob
+
+# merges all .xyz files for a tree in a directory
+def load_xyz_files_from_directory(directory_path):
+    all_points = []
+    xyz_files = sorted(glob.glob(os.path.join(directory_path, "*.xyz")))
+    for file_path in xyz_files:
+        points = np.loadtxt(file_path)
+        all_points.append(points)
+    if not all_points:
+        raise ValueError(f"No .xyz files found in directory: {directory_path}")
+    return np.concatenate(all_points, axis=0)
 
 
 def load_xyz_file(file_path):

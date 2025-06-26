@@ -1,9 +1,17 @@
-# main_tree_lidarnerf.py
 import torch
 from torch.utils.data import DataLoader
 from tree_dataset import TreePointCloudDataset
 from lidarnerf.lidar_field import LiDARNeRFNetwork  # assumed location
 from lidarnerf.trainer import Trainer  # assumed trainer file
+
+
+# def collate_fn(batch):
+#     out = {}
+#     for key in batch[0]:
+#         out[key] = torch.stack([torch.tensor(b[key]) for b in batch])
+#     return out
+# dataloader = DataLoader(dataset, batch_size=64, shuffle=True, collate_fn=collate_fn)
+
 
 # ======== CONFIGURATION ========
 xyz_path = "data/tree_sample.xyz"  # path to your .xyz file
