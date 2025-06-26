@@ -2,8 +2,28 @@
 import torch
 import numpy as np
 from tree_dataset import get_lidar_rays_from_xyz
-from lidarnerf.lidar_field import LiDARNeRFNetwork
+from lidarnerf.nerf.network import NeRFNetwork
 import os
+
+def forward_rays(model, rays_o, rays_d, step_size=0.01, max_dist=20.0):
+    N = rays_o.shape[0]
+    device = rays_o.device
+    t_vals = torch.arange(0.0, max_dist, step_size).to(device)  # shape: (T,)
+    t_vals = t_vals.expand(N, -1)  # (N, T)
+
+    pts = rays_o.unsqueeze(1) + t_vals.unsqueeze(-1) * rays_d.unsqueeze(1)  # (N, T, 3)
+    dirs = rays_d.unsqueeze(1).expand_as(pts)  # (N, T, 3)
+
+    pts_flat = pts.reshape(-1, 3)
+    dirs_flat = dirs.reshape(-1, 3)
+
+    raw = model(pts_flat, dirs_flat)
+    sigma = raw['sigma'].view(N, -1)
+    weights = 1.0 - torch.exp(-sigma * step_size)  # (N, T)
+    weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-5)
+    est_depth = (t_vals * weights).sum(dim=1)
+
+    return est_depth
 
 def compute_ray_directions(H, W, fov_up=30.0, fov_down=-10.0):
     fov_total = abs(fov_down) + abs(fov_up)
@@ -25,7 +45,6 @@ def compute_ray_directions(H, W, fov_up=30.0, fov_down=-10.0):
     return directions
 
 def render_dense_point_cloud(model_path, base_xyz_file, H=128, W=1024, output_path="dense_output.xyz"):
-    # Load sparse .xyz file just to re-use get_lidar_rays grid shape logic
     base_points = np.loadtxt(base_xyz_file)
     _, _, mask = get_lidar_rays_from_xyz(base_points, H=H, W=W)
     directions = compute_ray_directions(H, W)
@@ -33,13 +52,13 @@ def render_dense_point_cloud(model_path, base_xyz_file, H=128, W=1024, output_pa
     ray_dirs = directions[mask].reshape(-1, 3)
     ray_origins = np.zeros_like(ray_dirs, dtype=np.float32)
 
-    # Load trained model
-    model = LiDARNeRFNetwork(
-        use_viewdirs=False,
-        input_ch=3,
-        input_ch_views=0,
-        D=4,
-        W=128
+    model = NeRFNetwork(
+        encoding="hashgrid",
+        bound=1.0,
+        cuda_ray=False,
+        density_scale=1.0,
+        min_near=0.1,
+        num_levels=16
     ).cuda()
 
     if not os.path.exists(model_path):
@@ -48,18 +67,14 @@ def render_dense_point_cloud(model_path, base_xyz_file, H=128, W=1024, output_pa
     model.load_state_dict(torch.load(model_path))
     model.eval()
 
-    # Run inference
     with torch.no_grad():
         rays_o = torch.from_numpy(ray_origins).float().cuda()
         rays_d = torch.from_numpy(ray_dirs).float().cuda()
 
-        output = model(rays_o, rays_d)
-        distances = output['distance'].cpu().numpy()  # shape: (N,)
+        # ✅ CALLING forward_rays HERE
+        distances = forward_rays(model, rays_o, rays_d).cpu().numpy()
 
-    # Reconstruct (x, y, z)
     upsampled_xyz = ray_dirs * distances[:, np.newaxis]
-
-    # Save to .xyz file
     np.savetxt(output_path, upsampled_xyz, fmt="%.6f")
     print(f"Saved upsampled point cloud with {upsampled_xyz.shape[0]} points to: {output_path}")
 
